@@ -35,8 +35,8 @@ from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
 
 
-# device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-device = "cpu"
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+# device = "cpu"
 
 def sfb1d(lo, hi, g0, g1, mode='zero', dim=-1):
     """ 1D synthesis filter bank of an image tensor
@@ -389,10 +389,6 @@ class DWTForward(nn.Module):
 from numpy.lib.function_base import hamming
    
 xf1 = DWTForward(J=1, mode='zero', wave='db1').to(device)    
-xf2 = DWTForward(J=2, mode='zero', wave='db1').to(device)    
-xf3 = DWTForward(J=3, mode='zero', wave='db1').to(device)   
-xf4 = DWTForward(J=4, mode='zero', wave='db1').to(device)    
-
 class Level1Waveblock(nn.Module):
     def __init__(
         self,
@@ -433,220 +429,6 @@ class Level1Waveblock(nn.Module):
         
         return x
     
-class Level2Waveblock(nn.Module):
-    def __init__(
-        self,
-        *,
-        mult = 2,
-        ff_channel = 16,
-        final_dim = 16,
-        dropout = 0.5,
-    ):
-        super().__init__()
-        
-        self.feedforward1 = nn.Sequential(
-                nn.Conv2d(final_dim + int(final_dim/2), final_dim*mult,1),
-                nn.GELU(),
-                nn.Dropout(dropout),
-                nn.Conv2d(final_dim*mult, ff_channel, 1),
-                nn.ConvTranspose2d(ff_channel, final_dim, 4, stride=2, padding=1),
-                nn.BatchNorm2d(final_dim)         
-            )
-
-        self.feedforward2 = nn.Sequential(
-                nn.Conv2d(final_dim, final_dim*mult,1),
-                nn.GELU(),
-                nn.Dropout(dropout),
-                nn.Conv2d(final_dim*mult, ff_channel, 1),
-                nn.ConvTranspose2d(ff_channel, int(final_dim/2), 4, stride=2, padding=1),
-                nn.BatchNorm2d(int(final_dim/2))            
-            )
-
-        self.reduction = nn.Conv2d(final_dim, int(final_dim/4), 1)
-        
-        
-    def forward(self, x):
-        b, c, h, w = x.shape
-        
-        x = self.reduction(x)
-        
-        Y1, Yh = xf1(x)
-        Y2, Yh = xf2(x)
-
-        
-        x1 = torch.reshape(Yh[0], (b, int(c*3/4), int(h/2), int(w/2)))
-        x2 = torch.reshape(Yh[1], (b, int(c*3/4), int(h/4), int(w/4)))
-        
-        x1 = torch.cat((Y1,x1), dim = 1)
-        x2 = torch.cat((Y2,x2), dim = 1)
-        
-        x2 = self.feedforward2(x2)
-
-        x1 = torch.cat((x1,x2), dim = 1)
-        x = self.feedforward1(x1)
-        
-        return x
-    
-
-class Level3Waveblock(nn.Module):
-    def __init__(
-        self,
-        *,
-        mult = 2,
-        ff_channel = 16,
-        final_dim = 16,
-        dropout = 0.5,
-    ):
-        super().__init__()
-        
-        self.feedforward1 = nn.Sequential(
-                nn.Conv2d(final_dim + int(final_dim/2), final_dim*mult,1),
-                nn.GELU(),
-                nn.Dropout(dropout),
-                nn.Conv2d(final_dim*mult, ff_channel, 1),
-                nn.ConvTranspose2d(ff_channel, final_dim, 4, stride=2, padding=1),
-                nn.BatchNorm2d(final_dim)         
-            )
-
-        self.feedforward2 = nn.Sequential(
-                nn.Conv2d(final_dim + int(final_dim/2), final_dim*mult,1),
-                nn.GELU(),
-                nn.Dropout(dropout),
-                nn.Conv2d(final_dim*mult, ff_channel, 1),
-                nn.ConvTranspose2d(ff_channel, int(final_dim/2), 4, stride=2, padding=1),
-                nn.BatchNorm2d(int(final_dim/2))            
-            )
-
-        self.feedforward3 = nn.Sequential(
-                nn.Conv2d(final_dim, final_dim*mult,1),
-                nn.GELU(),
-                nn.Dropout(dropout),
-                nn.Conv2d(final_dim*mult, ff_channel, 1),
-                nn.ConvTranspose2d(ff_channel, int(final_dim/2), 4, stride=2, padding=1),
-                nn.BatchNorm2d(int(final_dim/2))          
-            )
-
-        self.reduction = nn.Conv2d(final_dim, int(final_dim/4), 1)
-        
-        
-    def forward(self, x):
-        b, c, h, w = x.shape
-        
-        x = self.reduction(x)
-        
-        Y1, Yh = xf1(x)
-        Y2, Yh = xf2(x)
-        Y3, Yh = xf3(x)
-        
-        
-        x1 = torch.reshape(Yh[0], (b, int(c*3/4), int(h/2), int(w/2)))
-        x2 = torch.reshape(Yh[1], (b, int(c*3/4), int(h/4), int(w/4)))
-        x3 = torch.reshape(Yh[2], (b, int(c*3/4), int(h/8), int(w/8)))
-        
-        
-        x1 = torch.cat((Y1,x1), dim = 1)
-        x2 = torch.cat((Y2,x2), dim = 1)
-        x3 = torch.cat((Y3,x3), dim = 1)
-       
-        
-        x3 = self.feedforward3(x3)
-        
-        x2 = torch.cat((x2,x3), dim = 1)
-
-        x2 = self.feedforward2(x2)
-
-        x1 = torch.cat((x1,x2), dim = 1)
-        x = self.feedforward1(x1)
-        
-        return x
-    
-    
-class Level4Waveblock(nn.Module):
-    def __init__(
-        self,
-        *,
-        mult = 2,
-        ff_channel = 16,
-        final_dim = 16,
-        dropout = 0.5,
-    ):
-        super().__init__()
-        
-      
-        self.feedforward1 = nn.Sequential(
-                nn.Conv2d(final_dim + int(final_dim/2), final_dim*mult,1),
-                nn.GELU(),
-                nn.Dropout(dropout),
-                nn.Conv2d(final_dim*mult, ff_channel, 1),
-                nn.ConvTranspose2d(ff_channel, final_dim, 4, stride=2, padding=1),
-                nn.BatchNorm2d(final_dim)         
-            )
-
-        self.feedforward2 = nn.Sequential(
-                nn.Conv2d(final_dim + int(final_dim/2), final_dim*mult,1),
-                nn.GELU(),
-                nn.Dropout(dropout),
-                nn.Conv2d(final_dim*mult, ff_channel, 1),
-                nn.ConvTranspose2d(ff_channel, int(final_dim/2), 4, stride=2, padding=1),
-                nn.BatchNorm2d(int(final_dim/2))            
-            )
-
-        self.feedforward3 = nn.Sequential(
-                nn.Conv2d(final_dim+ int(final_dim/2), final_dim*mult,1),
-                nn.GELU(),
-                nn.Dropout(dropout),
-                nn.Conv2d(final_dim*mult, ff_channel, 1),
-                nn.ConvTranspose2d(ff_channel, int(final_dim/2), 4, stride=2, padding=1),
-                nn.BatchNorm2d(int(final_dim/2))          
-            )
-
-        self.feedforward4 = nn.Sequential(
-                nn.Conv2d(final_dim, final_dim*mult,1),
-                nn.GELU(),
-                nn.Dropout(dropout),
-                nn.Conv2d(final_dim*mult, ff_channel, 1),
-                nn.ConvTranspose2d(ff_channel, int(final_dim/2), 4, stride=2, padding=1),
-                nn.BatchNorm2d(int(final_dim/2))          
-            )    
-
-        self.reduction = nn.Conv2d(final_dim, int(final_dim/4), 1)
-        
-        
-    def forward(self, x):
-        b, c, h, w = x.shape
-  
-        x = self.reduction(x)
-        
-        Y1, Yh = xf1(x)
-        Y2, Yh = xf2(x)
-        Y3, Yh = xf3(x)
-        Y4, Yh = xf4(x)
-        
-        x1 = torch.reshape(Yh[0], (b, int(c*3/4), int(h/2), int(w/2)))
-        x2 = torch.reshape(Yh[1], (b, int(c*3/4), int(h/4), int(w/4)))
-        x3 = torch.reshape(Yh[2], (b, int(c*3/4), int(h/8), int(w/8)))
-        x4 = torch.reshape(Yh[3], (b, int(c*3/4), int(h/16), int(w/16)))
-        
-        x1 = torch.cat((Y1,x1), dim = 1)
-        x2 = torch.cat((Y2,x2), dim = 1)
-        x3 = torch.cat((Y3,x3), dim = 1)
-        x4 = torch.cat((Y4,x4), dim = 1)
-        
-        
-        x4 = self.feedforward4(x4)
-        
-        x3 = torch.cat((x3,x4), dim = 1)
-        
-        x3 = self.feedforward3(x3)
-        
-        x2 = torch.cat((x2,x3), dim = 1)
-
-        x2 = self.feedforward2(x2)
-
-        x1 = torch.cat((x1,x2), dim = 1)
-        x = self.feedforward1(x1)
-    
-        return x
 
 ################################################################################
 
@@ -659,35 +441,60 @@ def autopad(k, p=None, d=1):  # kernel, padding, dilation
         p = k // 2 if isinstance(k, int) else [x // 2 for x in k]  # auto-pad
     return p
 
+
 class Conv(nn.Module):
     """Standard convolution with args(ch_in, ch_out, kernel, stride, padding, groups, dilation, activation)."""
 
     default_act = nn.SiLU()  # default activation
 
-    def __init__(self, c1, c2, k=1, s=1, p=None, g=1, d=1, act=True):
+    def __init__(self, c1, c2, k=1, s=1, wavemix=False, p=None, g=1, d=1, act=True):
         """Initialize Conv layer with given arguments including activation."""
         super().__init__()
         self.conv = nn.Conv2d(c1, c2, k, s, autopad(k, p, d), groups=g, dilation=d, bias=False)
         self.bn = nn.BatchNorm2d(c2)
         self.act = self.default_act if act is True else act if isinstance(act, nn.Module) else nn.Identity()
-        
-        self.layers = nn.ModuleList([])
-        for _ in range(8): 
-                self.layers.append(Level3Waveblock(mult = 2, ff_channel = 192, final_dim = c2, dropout = 0.5))
+        self.wavemix = wavemix
+
+        if self.wavemix:
+            self.layers = nn.ModuleList([])
+            for _ in range(2): 
+                    self.layers.append(Level1Waveblock(mult = 2, ff_channel = 192, final_dim = c2, dropout = 0.5))
                 
     def forward(self, x):
         """Apply convolution, batch normalization and activation to input tensor."""
         # return self.act(self.bn(self.conv(x)))
-        y = self.act(self.bn(self.conv(x)))
+        x = self.act(self.bn(self.conv(x)))
 
-        for attn in self.layers:
-            y = attn(y) + y
+        if self.wavemix:
+            for attn in self.layers:
+                x = attn(x) + x
 
-        return y
+        return x
 
     def forward_fuse(self, x):
         """Perform transposed convolution of 2D data."""
         return self.act(self.conv(x))
+
+
+# class Conv(nn.Module):
+#     """Standard convolution with args(ch_in, ch_out, kernel, stride, padding, groups, dilation, activation)."""
+
+#     default_act = nn.SiLU()  # default activation
+
+#     def __init__(self, c1, c2, k=1, s=1, p=None, g=1, d=1, act=True):
+#         """Initialize Conv layer with given arguments including activation."""
+#         super().__init__()
+#         self.conv = nn.Conv2d(c1, c2, k, s, autopad(k, p, d), groups=g, dilation=d, bias=False)
+#         self.bn = nn.BatchNorm2d(c2)
+#         self.act = self.default_act if act is True else act if isinstance(act, nn.Module) else nn.Identity()
+                
+#     def forward(self, x):
+#         """Apply convolution, batch normalization and activation to input tensor."""
+#         return self.act(self.bn(self.conv(x)))
+
+#     def forward_fuse(self, x):
+#         """Perform transposed convolution of 2D data."""
+#         return self.act(self.conv(x))
 
 
 class Conv2(Conv):
